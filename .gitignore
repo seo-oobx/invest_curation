@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+api/venv/
+__pycache__/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Next.js
+.next/
+out/
+build/
+dist/
+
+# System
+.DS_Store
+*.log
