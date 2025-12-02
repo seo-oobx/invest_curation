@@ -16,7 +16,7 @@ export default async function Home() {
     events = await getEvents();
   } catch (e) {
     console.error("Failed to fetch events:", e);
-    error = "Backend API is not reachable. Please make sure the FastAPI server is running.";
+    error = e instanceof Error ? e.message : "Backend API is not reachable. Please make sure the FastAPI server is running.";
   }
 
   // Sort by Hype Score descending
