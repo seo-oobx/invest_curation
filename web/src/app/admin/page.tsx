@@ -98,6 +98,31 @@ export default function AdminPage() {
         }
     };
 
+    const handleRunCrawler = async () => {
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) return;
+
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/crawl/manual`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${session.access_token}`
+                }
+            });
+
+            if (res.ok) {
+                alert("Crawler started in background! Please wait about 10-20 seconds for data to update, then refresh the Home page.");
+                router.refresh(); // Refresh admin page to ensure session is kept alive
+            } else {
+                const error = await res.json();
+                alert(`Failed to trigger crawler: ${JSON.stringify(error)}`);
+            }
+        } catch (err) {
+            console.error(err);
+            alert("Error triggering crawler");
+        }
+    };
+
     if (loading) return <div className="p-8">Loading Admin Panel...</div>;
     if (!isAdmin) return null;
 
@@ -180,7 +205,7 @@ export default function AdminPage() {
                     <CardContent>
                         <p className="text-muted-foreground">Crawler controls will be implemented here.</p>
                         <Button variant="outline" className="mt-4" disabled>Run Type A Crawler</Button>
-                        <Button variant="outline" className="mt-2 ml-2" disabled>Run Type B Crawler</Button>
+                        <Button variant="outline" className="mt-2 ml-2" onClick={handleRunCrawler}>Run Type B Crawler</Button>
                     </CardContent>
                 </Card>
             </div>

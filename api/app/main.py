@@ -14,6 +14,18 @@ app.add_middleware(
 
 app.include_router(events.router, prefix="/api/v1/events", tags=["events"])
 app.include_router(alerts.router, prefix="/api/v1/alerts", tags=["alerts"])
+from app.api.endpoints import admin
+app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
+
+from app.services.scheduler import scheduler_service
+
+@app.on_event("startup")
+async def startup_event():
+    scheduler_service.start()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    scheduler_service.shutdown()
 
 @app.get("/")
 def read_root():

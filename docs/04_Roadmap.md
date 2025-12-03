@@ -30,12 +30,12 @@
 ## ⚙️ Phase 2: Data Pipeline & Logic (The "Alpha" Engine)
 **목표:** 데이터 수집을 자동화하고, 수집된 데이터를 바탕으로 Hype Score를 계산하는 로직을 구현합니다.
 
-- [ ] **2.1 Crawler Engine (Playwright)**
+- [x] **2.1 Crawler Engine (Playwright)**
     - [x] 크롤러 기본 구조 설계 -> [`api/app/services/crawler/base.py`](../api/app/services/crawler/base.py)
     - [x] **Type A (Fact)** 수집기 구현 (DART, 뉴스) -> [`api/app/services/crawler/type_a_news.py`](../api/app/services/crawler/type_a_news.py)
     - [x] **Type B (Hype)** 수집기 구현 (네이버 데이터랩, 커뮤니티) -> [`api/app/services/crawler/type_b_hype.py`](../api/app/services/crawler/type_b_hype.py)
 
-- [ ] **2.2 Hype Scoring Algorithm**
+- [x] **2.2 Hype Scoring Algorithm**
     - [x] `HypeCalculator` 서비스 클래스 구현 -> [`api/app/services/hype_calculator.py`](../api/app/services/hype_calculator.py)
     - [x] 검색량/커뮤니티 글 수 정규화(Normalization) 로직 -> [`api/app/services/hype_calculator.py`](../api/app/services/hype_calculator.py)
     - [x] 기울기(Slope) 기반 급상승 감지 로직 -> [`api/app/services/hype_calculator.py`](../api/app/services/hype_calculator.py)
@@ -49,7 +49,7 @@
 ## 🖥️ Phase 3: Frontend MVP (Web)
 **목표:** 사용자가 정보를 시각적으로 소비할 수 있는 웹 인터페이스를 구축합니다.
 
-- [ ] **3.1 Project Initialization**
+- [x] **3.1 Project Initialization**
     - [x] Next.js (App Router) 프로젝트 생성 (`web/`) -> [`web/`](../web/)
     - [x] Tailwind CSS & UI 라이브러리(Shadcn 등) 설정 -> [`web/components.json`](../web/components.json)
 
@@ -82,3 +82,19 @@
     - [x] 관리자 대시보드 및 이벤트 생성 폼 -> [`web/src/app/admin/page.tsx`](../web/src/app/admin/page.tsx)
     - [ ] 크롤링 데이터 검수 및 승인 페이지
     - [ ] Hype Score 수동 보정 기능
+
+---
+
+## ☁️ Phase 5: Deployment & DevOps
+**목표:** 서비스를 실제 환경에 배포하고 안정적으로 운영합니다.
+
+- [x] **5.1 Backend Deployment (Railway)**
+    - [x] Railway 프로젝트 설정 및 배포 완료
+    - [x] 환경 변수 설정 (Supabase URL, API Keys)
+
+- [x] **5.2 Frontend Deployment (Vercel)**
+    - [x] Vercel 프로젝트 설정 및 배포 완료
+    - [x] Backend API 연동 (Environment Variables)
+
+- [x] **5.3 Integration**
+    - [x] Vercel <-> Railway 통신 확인 (CORS, API URL)
