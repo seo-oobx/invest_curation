@@ -4,9 +4,14 @@ import xml.etree.ElementTree as ET
 from urllib.parse import quote
 
 async def test_rss():
-    ticker = "삼성전자"
+    # Test with a mapped ticker
+    ticker = "MSFT"
+    from app.core.constants import TICKER_NAME_MAP
+    search_name = TICKER_NAME_MAP.get(ticker, ticker)
+    print(f"Testing ticker: {ticker} -> {search_name}")
+    
     # Keywords: 일정, 발표, 출시, 공개
-    query = f"{ticker} 일정 OR 발표 OR 출시 OR 공개"
+    query = f"{search_name} 일정 OR 발표 OR 출시 OR 공개"
     encoded_query = quote(query)
     url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
     
