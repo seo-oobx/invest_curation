@@ -3,7 +3,6 @@ from datetime import datetime, date, timedelta
 from typing import List, Dict, Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.db.session import get_db
-from app.services.crawler.type_b_hype import TypeBHypeCrawler
 from app.services.hype_calculator import HypeCalculator
 
 class SchedulerService:
@@ -82,6 +81,7 @@ class SchedulerService:
 
             # 2. Run Crawler (Type B for Hype)
             # We use the event title as the keyword for now.
+            from app.services.crawler.type_b_hype import TypeBHypeCrawler
             crawler = TypeBHypeCrawler(keyword=title)
             try:
                 crawl_results = await crawler.run()
