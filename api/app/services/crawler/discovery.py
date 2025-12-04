@@ -1,3 +1,11 @@
+"""
+Event Discovery Crawler (RSS Version)
+
+목표: 특정 종목(키워드)과 관련된 **미래 예정 이벤트**를 발견합니다.
+방법: Google News RSS를 통해 '예정', '계획', '출시 예정' 등 미래 지향적 키워드로 검색.
+변경: GPT가 날짜를 추출하므로 여기서는 기본값 할당하지 않음.
+"""
+
 from typing import List, Dict, Any, Optional
 from app.services.crawler.base import BaseCrawler
 from datetime import datetime
@@ -5,14 +13,15 @@ import httpx
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
 
+
 class EventDiscoveryCrawler(BaseCrawler):
     """
-    Event Discovery Crawler (RSS Version)
-    
-    목표: 특정 종목(키워드)과 관련된 미래 이벤트(일정)를 발견합니다.
-    방법: Google News RSS를 통해 '일정', '출시', '발표', '공개' 등의 키워드와 조합하여 검색.
-    장점: 브라우저 없이 빠르고 안정적으로 데이터 수집 가능.
+    Event Discovery Crawler - Finds FUTURE events via RSS.
     """
+    
+    # Keywords that indicate FUTURE events (not past)
+    FUTURE_KEYWORDS_KR = ["예정", "계획", "출시예정", "발표예정", "공개예정", "상반기", "하반기"]
+    FUTURE_KEYWORDS_EN = ["upcoming", "scheduled", "expected", "planned", "will launch", "to be released"]
     
     def __init__(self, ticker: str, headless: bool = True):
         super().__init__(headless)
@@ -21,115 +30,108 @@ class EventDiscoveryCrawler(BaseCrawler):
         from app.core.constants import TICKER_NAME_MAP
         search_name = TICKER_NAME_MAP.get(ticker, ticker)
         
-        # 검색 쿼리 조합: "{종목명} 일정 OR 출시 OR 발표 OR 공개"
-        # If ticker is different from name (e.g. MSFT vs 마이크로소프트), search both?
-        # Or just the name. Korean news usually uses the name.
-        self.search_query = f"{search_name} 일정 OR 출시 OR 발표 OR 공개"
+        # 개선된 검색 쿼리: 미래 지향적 키워드 사용
+        # "예정", "계획"을 포함하여 미래 이벤트만 검색
+        self.search_query = f"{search_name} (예정 OR 계획 OR 출시예정 OR upcoming OR scheduled OR 상반기 OR 하반기)"
         encoded_query = quote(self.search_query)
+        
         # Google News RSS URL (Korean, Korea region)
         self.rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
+        
+        # Also search in English for international tickers
+        self.search_query_en = f"{ticker} (upcoming OR scheduled OR expected OR planned OR launch date)"
+        encoded_query_en = quote(self.search_query_en)
+        self.rss_url_en = f"https://news.google.com/rss/search?q={encoded_query_en}&hl=en&gl=US&ceid=US:en"
 
-    def extract_event_date(self, text: str) -> Optional[str]:
-        """
-        Extract potential event date from text.
-        Returns ISO format date string (YYYY-MM-DD) or None.
-        """
-        import re
-        from datetime import date
+    def _contains_future_keyword(self, text: str) -> bool:
+        """Check if text contains future-oriented keywords."""
+        text_lower = text.lower()
+        for kw in self.FUTURE_KEYWORDS_KR + self.FUTURE_KEYWORDS_EN:
+            if kw.lower() in text_lower:
+                return True
+        return False
+
+    def _is_past_tense(self, text: str) -> bool:
+        """Check if text indicates past event (already happened)."""
+        past_indicators_kr = ["출시했", "발표했", "공개했", "선보였", "개최했", "열렸", "발매됐", "나왔"]
+        past_indicators_en = ["launched", "released", "announced", "unveiled", "revealed", "debuted"]
         
-        current_year = date.today().year
-        
-        # Korean pattern: 12월 5일, 1월, 내년 상반기 등
-        # Simple pattern: (\d+)월 (\d+)일
-        match = re.search(r"(\d{1,2})월\s*(\d{1,2})일", text)
-        if match:
-            month, day = map(int, match.groups())
-            # Simple logic: if month < current month, assume next year? 
-            # Or just assume current year for now.
-            # If today is Dec and we find Jan, it's next year.
-            year = current_year
-            if month < date.today().month:
-                year += 1
-            try:
-                return date(year, month, day).isoformat()
-            except:
-                pass
-                
-        # English pattern: Jan 15, January 15th
-        eng_months = {
-            "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
-            "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12
-        }
-        match = re.search(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2})", text, re.IGNORECASE)
-        if match:
-            month_str, day_str = match.groups()
-            month = eng_months[month_str.lower()[:3]]
-            day = int(day_str)
-            year = current_year
-            if month < date.today().month:
-                year += 1
-            try:
-                return date(year, month, day).isoformat()
-            except:
-                pass
-        
-        return None
+        text_lower = text.lower()
+        for indicator in past_indicators_kr + past_indicators_en:
+            if indicator in text_lower:
+                return True
+        return False
 
     async def run(self) -> List[Dict[str, Any]]:
         """
-        Override run method to use RSS instead of Playwright.
+        Fetch news via RSS and return items for GPT processing.
+        Does NOT assign default dates - GPT will extract dates.
         """
         print(f"Fetching RSS for {self.ticker}...")
         discovered_events = []
         
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(self.rss_url, timeout=10.0)
-                
-                if response.status_code != 200:
-                    print(f"Failed to fetch RSS for {self.ticker}: {response.status_code}")
-                    return []
-                
-                # Parse XML
-                root = ET.fromstring(response.content)
-                items = root.findall(".//item")
-                
-                # Limit to top 10 items
-                for item in items[:10]:
-                    title = item.find("title").text if item.find("title") is not None else "No Title"
-                    link = item.find("link").text if item.find("link") is not None else ""
-                    pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
-                    description = item.find("description").text if item.find("description") is not None else ""
+        # Fetch both Korean and English news
+        urls_to_fetch = [
+            (self.rss_url, "KR"),
+            (self.rss_url_en, "EN")
+        ]
+        
+        async with httpx.AsyncClient() as client:
+            for rss_url, lang in urls_to_fetch:
+                try:
+                    response = await client.get(rss_url, timeout=10.0)
                     
-                    # Clean title (remove source at the end, e.g. " - 뉴스1")
-                    if " - " in title:
-                        title = title.rsplit(" - ", 1)[0]
+                    if response.status_code != 200:
+                        print(f"  Failed to fetch {lang} RSS: {response.status_code}")
+                        continue
                     
-                    # Try to extract event date from title or description
-                    target_date = self.extract_event_date(title)
-                    if not target_date:
-                        target_date = self.extract_event_date(description)
+                    # Parse XML
+                    root = ET.fromstring(response.content)
+                    items = root.findall(".//item")
                     
-                    # If no date found, default to 3 months from now (as per user request 2-6 months)
-                    # But mark it as unconfirmed?
-                    # For now, let's just use a default if not found, so we populate the DB.
-                    if not target_date:
-                        # Default: 3 months later
-                        from datetime import date, timedelta
-                        target_date = (date.today() + timedelta(days=90)).isoformat()
-
-                    discovered_events.append({
-                        "type": "DISCOVERY",
-                        "ticker": self.ticker,
-                        "title": title,
-                        "description": description, 
-                        "source_url": link,
-                        "crawled_at": datetime.now().isoformat(),
-                        "pub_date": pub_date,
-                        "target_date": target_date
-                    })
+                    print(f"  Found {len(items)} {lang} news items")
                     
-        except Exception as e:
-            print(f"Error fetching RSS for {self.ticker}: {e}")
-            
+                    # Process top 10 items per language
+                    for item in items[:10]:
+                        title = item.find("title").text if item.find("title") is not None else ""
+                        link = item.find("link").text if item.find("link") is not None else ""
+                        pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
+                        description = item.find("description").text if item.find("description") is not None else ""
+                        
+                        if not title:
+                            continue
+                        
+                        # Clean title (remove source at the end, e.g. " - 뉴스1")
+                        if " - " in title:
+                            title = title.rsplit(" - ", 1)[0]
+                        
+                        # Pre-filter: Skip obvious past events
+                        if self._is_past_tense(title):
+                            print(f"    Skip (past): {title[:40]}...")
+                            continue
+                        
+                        # Preference for items with future keywords
+                        has_future_keyword = self._contains_future_keyword(title) or self._contains_future_keyword(description)
+                        
+                        # NO default date - GPT will extract or return null
+                        discovered_events.append({
+                            "type": "DISCOVERY",
+                            "ticker": self.ticker,
+                            "title": title,
+                            "description": description[:500] if description else "",  # Limit length
+                            "source_url": link,
+                            "crawled_at": datetime.now().isoformat(),
+                            "pub_date": pub_date,
+                            "target_date": None,  # GPT will extract
+                            "has_future_keyword": has_future_keyword,
+                            "language": lang
+                        })
+                        
+                except Exception as e:
+                    print(f"  Error fetching {lang} RSS: {e}")
+        
+        # Sort: prioritize items with future keywords
+        discovered_events.sort(key=lambda x: (not x.get("has_future_keyword", False)))
+        
+        print(f"  Total: {len(discovered_events)} news items for GPT processing")
         return discovered_events
