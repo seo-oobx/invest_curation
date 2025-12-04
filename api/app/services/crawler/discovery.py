@@ -21,27 +21,62 @@ class EventDiscoveryCrawler(BaseCrawler):
         self.base_url = f"https://search.naver.com/search.naver?where=news&query={self.search_query}&sm=tab_opt&sort=1" # sort=1 (최신순)
 
     async def crawl(self, browser: Browser) -> List[Dict[str, Any]]:
-        page = await browser.new_page()
+        # Create context with User-Agent to avoid bot detection and get consistent desktop view
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+        page = await context.new_page()
         
         # 1. 네이버 뉴스 검색 (최신순)
         await page.goto(self.base_url)
-        await page.wait_for_selector(".list_news")
+        try:
+            # Wait for the body or the list container
+            await page.wait_for_selector("body", timeout=5000)
+        except:
+            print(f"Timeout waiting for body for {self.ticker}")
+            await context.close()
+            return []
         
-        news_items = await page.query_selector_all(".news_area")
+        # Try to find items using the class we saw in debugging: api_subject_bx
+        # This seems to be the container for news items in the new Fender UI
+        news_items = await page.query_selector_all("div.api_subject_bx")
         
+        # Fallback to .news_wrap if api_subject_bx is not found (legacy view)
+        if not news_items:
+             news_items = await page.query_selector_all(".news_wrap")
+        
+        # Fallback to .bx if neither found
+        if not news_items:
+             news_items = await page.query_selector_all("li.bx")
+
         discovered_events = []
         
         for item in news_items:
-            # 제목
-            title_el = await item.query_selector(".news_tit")
+            # Try to find the title link. 
+            # In Fender UI, it's usually the first 'a' tag with some text, or we can look for specific classes if we knew them.
+            # But since classes are dynamic, let's look for the 'a' tag that is likely the title.
+            # Usually it's an 'a' tag that contains the title text.
+            # Let's try to find an 'a' tag that has a non-empty text and href.
+            
+            # Strategy: Get all links, pick the one with the longest text (heuristic) or the first one.
+            links = await item.query_selector_all("a")
+            title_el = None
+            for link in links:
+                text = await link.inner_text()
+                if len(text) > 10: # Assuming titles are reasonably long
+                    title_el = link
+                    break
+            
             if not title_el:
                 continue
+
             title = await title_el.inner_text()
             link = await title_el.get_attribute("href")
             
-            # 요약문
-            desc_el = await item.query_selector(".news_dsc")
-            desc = await desc_el.inner_text() if desc_el else ""
+            # 요약문 (Description)
+            # Try to find a div or p that looks like a description
+            desc = ""
+            # This is hard without stable classes. We'll skip description for now or try a generic approach.
             
             # 날짜 추출 시도 (매우 단순한 정규식 사용)
             # 예: "12월 5일", "2024년 1월", "다음달" 등
@@ -60,7 +95,7 @@ class EventDiscoveryCrawler(BaseCrawler):
                     "crawled_at": datetime.now().isoformat()
                 })
 
-        await page.close()
+        await context.close()
         return discovered_events
 
     def parse(self, html_content: str) -> Optional[Dict[str, Any]]:

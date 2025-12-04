@@ -20,7 +20,10 @@ class TypeBHypeCrawler(BaseCrawler):
 
     async def crawl(self, browser: Browser) -> List[Dict[str, Any]]:
         # 1. 인턴에게 "네이버 블로그/카페 검색 탭으로 가"라고 지시
-        page = await browser.new_page()
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+        page = await context.new_page()
         await page.goto(self.base_url)
         
         # 2. 검색 결과가 뜰 때까지 대기
