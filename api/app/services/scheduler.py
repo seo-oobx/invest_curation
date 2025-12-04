@@ -42,12 +42,16 @@ class SchedulerService:
                     if not existing.data:
                         print(f"  -> New event found: {event_data['title']}")
                         # Insert new event as INACTIVE by default
+                        target_date = event_data.get('target_date')
+                        if not target_date:
+                             target_date = (date.today() + timedelta(days=90)).isoformat()
+                        
                         self.supabase.table("events").insert({
                             "title": event_data['title'],
                             "description": event_data['description'],
                             "event_type": "TYPE_A", # Default to Type A for now
                             "status": "INACTIVE",
-                            "target_date": (date.today() + timedelta(days=30)).isoformat(), # Placeholder date
+                            "target_date": target_date,
                             "related_tickers": [ticker],
                             "source_url": event_data['source_url'],
                             "hype_score": 0

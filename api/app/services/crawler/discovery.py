@@ -23,6 +23,52 @@ class EventDiscoveryCrawler(BaseCrawler):
         # Google News RSS URL (Korean, Korea region)
         self.rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
 
+    def extract_event_date(self, text: str) -> Optional[str]:
+        """
+        Extract potential event date from text.
+        Returns ISO format date string (YYYY-MM-DD) or None.
+        """
+        import re
+        from datetime import date
+        
+        current_year = date.today().year
+        
+        # Korean pattern: 12월 5일, 1월, 내년 상반기 등
+        # Simple pattern: (\d+)월 (\d+)일
+        match = re.search(r"(\d{1,2})월\s*(\d{1,2})일", text)
+        if match:
+            month, day = map(int, match.groups())
+            # Simple logic: if month < current month, assume next year? 
+            # Or just assume current year for now.
+            # If today is Dec and we find Jan, it's next year.
+            year = current_year
+            if month < date.today().month:
+                year += 1
+            try:
+                return date(year, month, day).isoformat()
+            except:
+                pass
+                
+        # English pattern: Jan 15, January 15th
+        eng_months = {
+            "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+            "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12
+        }
+        match = re.search(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2})", text, re.IGNORECASE)
+        if match:
+            month_str, day_str = match.groups()
+            month = eng_months[month_str.lower()[:3]]
+            day = int(day_str)
+            year = current_year
+            if month < date.today().month:
+                year += 1
+            try:
+                return date(year, month, day).isoformat()
+            except:
+                pass
+        
+        return None
+
     async def run(self) -> List[Dict[str, Any]]:
         """
         Override run method to use RSS instead of Playwright.
@@ -53,14 +99,28 @@ class EventDiscoveryCrawler(BaseCrawler):
                     if " - " in title:
                         title = title.rsplit(" - ", 1)[0]
                     
+                    # Try to extract event date from title or description
+                    target_date = self.extract_event_date(title)
+                    if not target_date:
+                        target_date = self.extract_event_date(description)
+                    
+                    # If no date found, default to 3 months from now (as per user request 2-6 months)
+                    # But mark it as unconfirmed?
+                    # For now, let's just use a default if not found, so we populate the DB.
+                    if not target_date:
+                        # Default: 3 months later
+                        from datetime import date, timedelta
+                        target_date = (date.today() + timedelta(days=90)).isoformat()
+
                     discovered_events.append({
                         "type": "DISCOVERY",
                         "ticker": self.ticker,
                         "title": title,
-                        "description": description, # RSS description is often short or HTML
+                        "description": description, 
                         "source_url": link,
                         "crawled_at": datetime.now().isoformat(),
-                        "pub_date": pub_date
+                        "pub_date": pub_date,
+                        "target_date": target_date
                     })
                     
         except Exception as e:
