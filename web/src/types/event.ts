@@ -1,5 +1,5 @@
 export type EventType = 'TYPE_A' | 'TYPE_B';
-export type EventStatus = 'ACTIVE' | 'FINISHED';
+export type EventStatus = 'PENDING' | 'ACTIVE' | 'FINISHED';
 
 export interface HypeMetric {
     id: number;
@@ -21,10 +21,13 @@ export interface EventProxy {
 export interface Event {
     id: number;
     title: string;
+    description?: string;
+    source_url?: string;
     target_date: string; // YYYY-MM-DD
     is_date_confirmed: boolean;
     event_type: EventType;
     hype_score: number;
+    gpt_confidence?: number; // GPT extraction confidence (0.0-1.0)
     related_tickers: string[];
     status: EventStatus;
     created_at: string;

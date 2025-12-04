@@ -133,10 +133,3 @@ class EventDiscoveryCrawler(BaseCrawler):
             print(f"Error fetching RSS for {self.ticker}: {e}")
             
         return discovered_events
-
-    # Unused methods from BaseCrawler
-    async def crawl(self, browser):
-        pass
-
-    def parse(self, html_content: str) -> Optional[Dict[str, Any]]:
-        pass

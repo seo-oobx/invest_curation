@@ -1,155 +1,386 @@
+"""
+Scheduler Service
+
+Main daily job pipeline:
+1. Discovery: Crawl news for each target ticker
+2. GPT Extraction: Extract future events (2-6 months) using OpenAI
+3. Multi-source Hype: Collect data from News, Reddit, Naver
+4. Score Calculation: Weighted hype score
+5. Auto-publish: ACTIVE if score >= 50, else PENDING for review
+"""
+
 import asyncio
+import os
 from datetime import datetime, date, timedelta
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.db.session import get_db
 from app.services.hype_calculator import HypeCalculator
 
+
 class SchedulerService:
+    """
+    Main scheduler service for daily event discovery and hype calculation.
+    """
+    
     def __init__(self):
         self.scheduler = AsyncIOScheduler()
         self.supabase = get_db()
+        self._is_running = False
 
-    def start(self):
-        # Schedule the job to run every day at 00:00 (Midnight)
-        # For testing purposes, we can also trigger it manually.
-        self.scheduler.add_job(self.daily_update_job, 'cron', hour=0, minute=0)
+    def start(self, run_immediately: bool = False):
+        """
+        Start the scheduler.
+        """
+        # Schedule daily job at midnight
+        self.scheduler.add_job(self.daily_update_job, 'cron', hour=0, minute=0, id='daily_update')
         self.scheduler.start()
         print("Scheduler started...")
+        
+        should_run_immediately = run_immediately or os.getenv("RUN_CRAWLER_ON_STARTUP", "false").lower() == "true"
+        
+        if should_run_immediately:
+            print("Scheduling immediate crawl on startup...")
+            self.scheduler.add_job(
+                self.daily_update_job, 
+                'date', 
+                run_date=datetime.now() + timedelta(seconds=5),
+                id='startup_crawl'
+            )
 
     def shutdown(self):
         self.scheduler.shutdown()
         print("Scheduler shut down...")
 
     async def daily_update_job(self):
+        """
+        Main daily pipeline:
+        1. Discover events from news (with GPT extraction)
+        2. Calculate multi-source hype scores
+        3. Auto-publish or queue for review
+        """
+        if self._is_running:
+            print("Job already running, skipping...")
+            return
+            
+        self._is_running = True
+        print(f"\n{'='*60}")
         print(f"[{datetime.now()}] Starting daily update job...")
+        print(f"{'='*60}\n")
         
-        # 0. Discovery Phase: Find new events for target tickers
+        try:
+            # Phase 1: Event Discovery with GPT
+            await self._phase_discovery()
+            
+            # Phase 2: Multi-source Hype Calculation
+            await self._phase_hype_calculation()
+            
+            print(f"\n{'='*60}")
+            print(f"[{datetime.now()}] Daily update job completed.")
+            print(f"{'='*60}\n")
+            
+        except Exception as e:
+            print(f"Critical error in daily job: {e}")
+        finally:
+            self._is_running = False
+
+    async def _phase_discovery(self):
+        """
+        Phase 1: Discover new events for target tickers using news + GPT.
+        """
         from app.core.constants import TARGET_TICKERS
         from app.services.crawler.discovery import EventDiscoveryCrawler
+        from app.services.openai_service import openai_service
         
-        print(f"Starting Discovery Phase for {len(TARGET_TICKERS)} tickers...")
-        for ticker in TARGET_TICKERS:
-            # Simple rate limiting or batching could be added here
-            print(f"Discovering events for {ticker}...")
-            discovery_crawler = EventDiscoveryCrawler(ticker=ticker)
+        print(f"\n[Phase 1] Event Discovery for {len(TARGET_TICKERS)} tickers...")
+        
+        events_created = 0
+        events_skipped = 0
+        
+        for i, ticker in enumerate(TARGET_TICKERS):
+            print(f"\n[{i+1}/{len(TARGET_TICKERS)}] Processing {ticker}...")
+            
             try:
-                discovered = await discovery_crawler.run()
-                for event_data in discovered:
-                    # Check if event already exists (simple check by title)
-                    existing = self.supabase.table("events").select("id").eq("title", event_data['title']).execute()
-                    if not existing.data:
-                        print(f"  -> New event found: {event_data['title']}")
-                        # Insert new event as INACTIVE by default
-                        target_date = event_data.get('target_date')
-                        if not target_date:
-                             target_date = (date.today() + timedelta(days=90)).isoformat()
+                # Step 1: Crawl news
+                discovery_crawler = EventDiscoveryCrawler(ticker=ticker)
+                news_items = await discovery_crawler.run()
+                
+                if not news_items:
+                    print(f"  No news found for {ticker}")
+                    continue
+                
+                print(f"  Found {len(news_items)} news items")
+                
+                # Step 2: Extract events using GPT (limit to top 5 news)
+                for news in news_items[:5]:
+                    # Check if event with similar title exists
+                    title_prefix = news['title'][:80] if news.get('title') else ""
+                    if not title_prefix:
+                        continue
                         
-                        self.supabase.table("events").insert({
-                            "title": event_data['title'],
-                            "description": event_data['description'],
-                            "event_type": "TYPE_A", # Default to Type A for now
-                            "status": "ACTIVE", # Auto-activate to show on main page immediately
-                            "target_date": target_date,
-                            "related_tickers": [ticker],
-                            "source_url": event_data['source_url'],
-                            "hype_score": 0
-                        }).execute()
+                    existing = self.supabase.table("events")\
+                        .select("id")\
+                        .ilike("title", f"%{title_prefix[:50]}%")\
+                        .execute()
+                    
+                    if existing.data:
+                        events_skipped += 1
+                        continue
+                    
+                    # Try GPT extraction for precise event date
+                    gpt_event = await openai_service.extract_event_from_news(
+                        ticker=ticker,
+                        news_title=news.get('title', ''),
+                        news_summary=news.get('description', '')
+                    )
+                    
+                    if gpt_event and gpt_event.get('event_title'):
+                        # GPT found a valid future event
+                        event_data = self._create_event_from_gpt(
+                            ticker=ticker,
+                            news=news,
+                            gpt_event=gpt_event
+                        )
                     else:
-                        print(f"  -> Event already exists: {event_data['title']}")
+                        # Fallback: Use news directly with default date
+                        event_data = self._create_event_from_news(
+                            ticker=ticker,
+                            news=news
+                        )
+                    
+                    if event_data:
+                        try:
+                            self.supabase.table("events").insert(event_data).execute()
+                            events_created += 1
+                            print(f"  + Created: {event_data['title'][:50]}...")
+                        except Exception as e:
+                            print(f"  Error inserting event: {e}")
+                    
+                    await asyncio.sleep(0.3)  # Rate limit
+                    
             except Exception as e:
-                print(f"Error discovering for {ticker}: {e}")
+                print(f"  Error processing {ticker}: {e}")
+            
+            await asyncio.sleep(0.5)  # Rate limit between tickers
+        
+        print(f"\n[Phase 1 Complete] Created: {events_created}, Skipped: {events_skipped}")
 
-        # 1. Fetch all ACTIVE events
+    def _create_event_from_gpt(
+        self, 
+        ticker: str, 
+        news: Dict, 
+        gpt_event: Dict
+    ) -> Dict[str, Any]:
+        """Create event record from GPT-extracted data."""
+        confidence = gpt_event.get('confidence', 0.5)
+        
+        # Calculate initial hype score (will be updated in phase 2)
+        initial_score = 30 if confidence >= 0.7 else 20
+        
+        # Determine status based on confidence
+        status = "ACTIVE" if confidence >= 0.7 else "PENDING"
+        
+        return {
+            "title": gpt_event.get('event_title', news.get('title', ''))[:200],
+            "description": news.get('description', '')[:500],
+            "event_type": gpt_event.get('event_type', 'TYPE_A'),
+            "status": status,
+            "target_date": gpt_event.get('event_date'),
+            "is_date_confirmed": confidence >= 0.8,
+            "related_tickers": [ticker],
+            "source_url": news.get('source_url', ''),
+            "hype_score": initial_score,
+            "gpt_confidence": confidence
+        }
+
+    def _create_event_from_news(
+        self, 
+        ticker: str, 
+        news: Dict
+    ) -> Optional[Dict[str, Any]]:
+        """Create event record directly from news (fallback when GPT unavailable)."""
+        title = news.get('title', '')
+        if not title:
+            return None
+        
+        # Default target date: 3 months from now
+        target_date = news.get('target_date')
+        if not target_date:
+            target_date = (date.today() + timedelta(days=90)).isoformat()
+        
+        return {
+            "title": title[:200],
+            "description": news.get('description', '')[:500],
+            "event_type": "TYPE_A",
+            "status": "PENDING",  # Always pending without GPT confidence
+            "target_date": target_date,
+            "is_date_confirmed": False,
+            "related_tickers": [ticker],
+            "source_url": news.get('source_url', ''),
+            "hype_score": 10,
+            "gpt_confidence": 0.0
+        }
+
+    async def _phase_hype_calculation(self):
+        """
+        Phase 2: Calculate multi-source hype scores for all events.
+        """
+        from app.services.crawler.type_b_hype import TypeBHypeCrawler
+        from app.services.crawler.reddit import RedditCrawler, NaverDiscussionCrawler
+        
+        print(f"\n[Phase 2] Hype Score Calculation...")
+        
+        # Fetch all non-finished events
         try:
-            response = self.supabase.table("events").select("*").eq("status", "ACTIVE").execute()
+            response = self.supabase.table("events")\
+                .select("*")\
+                .neq("status", "FINISHED")\
+                .execute()
             events = response.data
         except Exception as e:
             print(f"Error fetching events: {e}")
             return
-
+        
         if not events:
-            print("No active events found.")
+            print("No events to process.")
             return
-
-        print(f"Found {len(events)} active events. Starting crawl...")
-
+        
+        print(f"Processing {len(events)} events...")
+        
         for event in events:
             event_id = event['id']
             title = event['title']
-            print(f"Processing event: {title} (ID: {event_id})")
-
-            # 2. Run Crawler (Type B for Hype)
-            # We use the event title as the keyword for now.
-            from app.services.crawler.type_b_hype import TypeBHypeCrawler
-            crawler = TypeBHypeCrawler(keyword=title)
-            try:
-                crawl_results = await crawler.run()
-            except Exception as e:
-                print(f"Error crawling for {title}: {e}")
-                continue
-
-            if not crawl_results:
-                print(f"No results for {title}")
-                continue
-
-            # Assuming the first result is what we want (since we search by specific keyword)
-            result = crawl_results[0]
-            community_buzz = result.get("hype_score_proxy", 0)
-
-            # 3. Get previous metrics for trend calculation
-            # Fetch the most recent metric before today
-            prev_metrics = None
-            try:
-                metrics_res = self.supabase.table("hype_metrics")\
-                    .select("*")\
-                    .eq("event_id", event_id)\
-                    .order("recorded_at", desc=True)\
-                    .limit(1)\
-                    .execute()
-                
-                if metrics_res.data:
-                    prev_data = metrics_res.data[0]
-                    prev_metrics = {
-                        "community_buzz": prev_data.get("community_buzz", 0),
-                        "search_volume": prev_data.get("search_volume", 0)
-                    }
-            except Exception as e:
-                print(f"Error fetching previous metrics for {title}: {e}")
-
-            # 4. Calculate Hype Score
-            current_metrics = {"community_buzz": community_buzz}
-            new_hype_score = HypeCalculator.calculate_score(current_metrics, prev_metrics)
+            tickers = event.get('related_tickers', [])
             
-            print(f"  -> Community Buzz: {community_buzz}, New Score: {new_hype_score}")
-
-            # 5. Update DB
+            print(f"\n  Processing: {title[:40]}... (ID: {event_id})")
+            
             try:
-                # Insert into hype_metrics
-                self.supabase.table("hype_metrics").insert({
-                    "event_id": event_id,
-                    "recorded_at": date.today().isoformat(),
-                    "community_buzz": community_buzz,
-                    "search_volume": 0, # Not crawling search volume yet
-                    "youtube_count": 0  # Not crawling youtube yet
-                }).execute()
-
-                # Update events table
+                # Collect metrics from multiple sources
+                metrics = await self._collect_multi_source_metrics(title, tickers)
+                
+                # Get previous metrics for trend calculation
+                prev_metrics = await self._get_previous_metrics(event_id)
+                
+                # Calculate new hype score
+                new_score = HypeCalculator.calculate(metrics, prev_metrics)
+                
+                # Determine if should auto-publish
+                confidence = event.get('gpt_confidence', 0.5)
+                current_status = event.get('status', 'PENDING')
+                
+                new_status = current_status
+                if current_status == "PENDING":
+                    if HypeCalculator.should_auto_publish(new_score, confidence):
+                        new_status = "ACTIVE"
+                        print(f"    -> Auto-publishing (score: {new_score}, confidence: {confidence})")
+                
+                # Save metrics to hype_metrics table
+                await self._save_metrics(event_id, metrics)
+                
+                # Update event
                 self.supabase.table("events").update({
-                    "hype_score": new_hype_score,
+                    "hype_score": new_score,
+                    "status": new_status,
                     "updated_at": datetime.now().isoformat()
                 }).eq("id", event_id).execute()
                 
+                print(f"    Score: {new_score} | Status: {new_status}")
+                
             except Exception as e:
-                print(f"Error updating DB for {title}: {e}")
+                print(f"    Error: {e}")
+            
+            await asyncio.sleep(0.3)
+        
+        print(f"\n[Phase 2 Complete]")
 
-        print(f"[{datetime.now()}] Daily update job completed.")
+    async def _collect_multi_source_metrics(
+        self, 
+        keyword: str, 
+        tickers: List[str]
+    ) -> Dict[str, int]:
+        """
+        Collect hype metrics from multiple sources.
+        """
+        from app.services.crawler.type_b_hype import TypeBHypeCrawler
+        from app.services.crawler.reddit import RedditCrawler, NaverDiscussionCrawler
+        
+        metrics = {
+            "news_count": 0,
+            "news_ranking": 0,
+            "reddit_posts": 0,
+            "reddit_engagement": 0,
+            "naver_buzz": 0
+        }
+        
+        # 1. Google News (existing crawler)
+        try:
+            news_crawler = TypeBHypeCrawler(keyword=keyword)
+            news_result = await news_crawler.run()
+            if news_result:
+                metrics["news_count"] = news_result[0].get("hype_score_proxy", 0)
+        except Exception as e:
+            print(f"      News crawl error: {e}")
+        
+        # 2. Reddit (for English tickers)
+        search_term = tickers[0] if tickers else keyword
+        try:
+            reddit_crawler = RedditCrawler(keyword=search_term)
+            reddit_result = await reddit_crawler.run()
+            metrics["reddit_posts"] = reddit_result.get("post_count", 0)
+            metrics["reddit_engagement"] = reddit_result.get("engagement", 0)
+        except Exception as e:
+            print(f"      Reddit crawl error: {e}")
+        
+        # 3. Korean news/community
+        try:
+            naver_crawler = NaverDiscussionCrawler(keyword=keyword)
+            naver_result = await naver_crawler.run()
+            metrics["naver_buzz"] = naver_result.get("post_count", 0)
+        except Exception as e:
+            print(f"      Naver crawl error: {e}")
+        
+        return metrics
+
+    async def _get_previous_metrics(self, event_id: int) -> Optional[Dict[str, int]]:
+        """Get previous day's metrics for trend calculation."""
+        try:
+            result = self.supabase.table("hype_metrics")\
+                .select("*")\
+                .eq("event_id", event_id)\
+                .order("recorded_at", desc=True)\
+                .limit(1)\
+                .execute()
+            
+            if result.data:
+                prev = result.data[0]
+                return {
+                    "news_count": prev.get("search_volume", 0),  # mapped from old schema
+                    "naver_buzz": prev.get("community_buzz", 0),
+                    "reddit_posts": prev.get("youtube_count", 0),  # repurposed field
+                    "reddit_engagement": 0,
+                    "news_ranking": 0
+                }
+        except Exception as e:
+            print(f"      Error fetching previous metrics: {e}")
+        
+        return None
+
+    async def _save_metrics(self, event_id: int, metrics: Dict[str, int]):
+        """Save current metrics to hype_metrics table."""
+        try:
+            self.supabase.table("hype_metrics").insert({
+                "event_id": event_id,
+                "recorded_at": date.today().isoformat(),
+                "search_volume": metrics.get("news_count", 0),  # mapped to existing field
+                "community_buzz": metrics.get("naver_buzz", 0),
+                "youtube_count": metrics.get("reddit_posts", 0)  # repurposed for reddit
+            }).execute()
+        except Exception as e:
+            print(f"      Error saving metrics: {e}")
 
     async def trigger_manual_update(self):
-        """
-        Manually trigger the update job.
-        Useful for testing or admin forcing an update.
-        """
+        """Manually trigger the update job."""
         await self.daily_update_job()
+
 
 scheduler_service = SchedulerService()

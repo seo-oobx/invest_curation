@@ -9,6 +9,7 @@ class EventType(str, Enum):
     TYPE_B = 'TYPE_B'
 
 class EventStatus(str, Enum):
+    PENDING = 'PENDING'
     ACTIVE = 'ACTIVE'
     FINISHED = 'FINISHED'
 
@@ -52,21 +53,27 @@ class EventProxyResponse(EventProxyBase):
 # --- Events ---
 class EventBase(BaseModel):
     title: str
+    description: Optional[str] = None
+    source_url: Optional[str] = None
     target_date: date
     is_date_confirmed: bool = False
     event_type: EventType
     related_tickers: List[str] = []
-    status: EventStatus = EventStatus.ACTIVE
+    status: EventStatus = EventStatus.PENDING
+    gpt_confidence: float = 0.0
 
 class EventCreate(EventBase):
     pass
 
 class EventUpdate(BaseModel):
     title: Optional[str] = None
+    description: Optional[str] = None
+    source_url: Optional[str] = None
     target_date: Optional[date] = None
     is_date_confirmed: Optional[bool] = None
     event_type: Optional[EventType] = None
     hype_score: Optional[int] = None
+    gpt_confidence: Optional[float] = None
     related_tickers: Optional[List[str]] = None
     status: Optional[EventStatus] = None
 

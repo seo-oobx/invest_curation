@@ -1,39 +1,30 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
-from playwright.async_api import async_playwright, Browser, Page
 
 class BaseCrawler(ABC):
     """
     Abstract Base Class for all crawlers.
     Enforces a standard interface for crawling and parsing data.
+    
+    Note: This base class is now HTTP-based (using httpx) instead of browser-based.
+    Subclasses should implement run() with their own HTTP logic.
     """
     
     def __init__(self, headless: bool = True):
+        # headless parameter kept for backward compatibility but not used
         self.headless = headless
 
+    @abstractmethod
     async def run(self) -> List[Dict[str, Any]]:
         """
         Main execution method.
-        Starts the browser, performs the crawl, and returns structured data.
-        """
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=self.headless)
-            try:
-                return await self.crawl(browser)
-            finally:
-                await browser.close()
-
-    @abstractmethod
-    async def crawl(self, browser: Browser) -> List[Dict[str, Any]]:
-        """
-        Implement the specific crawling logic here.
-        Should return a list of dictionaries representing the crawled items.
+        Should perform HTTP requests and return structured data.
         """
         pass
 
-    @abstractmethod
-    def parse(self, html_content: str) -> Optional[Dict[str, Any]]:
+    def parse(self, content: str) -> Optional[Dict[str, Any]]:
         """
-        Parse raw HTML content into structured data.
+        Parse raw content into structured data.
+        Override in subclass if needed.
         """
         pass

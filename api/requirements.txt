@@ -5,7 +5,6 @@ pydantic
 pydantic-settings
 python-dotenv
 httpx
-playwright
 beautifulsoup4
 lxml
 resend
