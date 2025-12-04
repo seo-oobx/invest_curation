@@ -123,6 +123,39 @@ export default function AdminPage() {
         }
     };
 
+    // Event List State
+    const [events, setEvents] = useState<any[]>([]);
+
+    const fetchEvents = async () => {
+        const { data, error } = await supabase
+            .from('events')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+        if (data) setEvents(data);
+        if (error) console.error("Error fetching events:", error);
+    };
+
+    useEffect(() => {
+        if (isAdmin) {
+            fetchEvents();
+        }
+    }, [isAdmin]);
+
+    const toggleStatus = async (id: string, currentStatus: string) => {
+        const newStatus = currentStatus === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+        const { error } = await supabase
+            .from('events')
+            .update({ status: newStatus })
+            .eq('id', id);
+
+        if (!error) {
+            fetchEvents();
+        } else {
+            alert("Failed to update status");
+        }
+    };
+
     if (loading) return <div className="p-8">Loading Admin Panel...</div>;
     if (!isAdmin) return null;
 
@@ -130,7 +163,7 @@ export default function AdminPage() {
         <div className="container mx-auto py-8 px-4">
             <h1 className="text-3xl font-bold mb-8">Admin Dashboard</h1>
 
-            <div className="grid gap-8 md:grid-cols-2">
+            <div className="grid gap-8 md:grid-cols-2 mb-8">
                 <Card>
                     <CardHeader>
                         <CardTitle>Create New Event</CardTitle>
@@ -203,12 +236,73 @@ export default function AdminPage() {
                         <CardTitle>Crawler Status</CardTitle>
                     </CardHeader>
                     <CardContent>
-                        <p className="text-muted-foreground">Crawler controls will be implemented here.</p>
-                        <Button variant="outline" className="mt-4" disabled>Run Type A Crawler</Button>
-                        <Button variant="outline" className="mt-2 ml-2" onClick={handleRunCrawler}>Run Type B Crawler</Button>
+                        <p className="text-muted-foreground mb-4">
+                            Crawler runs automatically every day at 00:00.
+                            <br />
+                            You can also trigger it manually here.
+                        </p>
+                        <Button variant="outline" className="w-full" onClick={handleRunCrawler}>
+                            Run Crawler (Discovery + Hype)
+                        </Button>
                     </CardContent>
                 </Card>
             </div>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>Event Management</CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <div className="rounded-md border">
+                        <table className="w-full text-sm text-left">
+                            <thead className="bg-muted/50">
+                                <tr>
+                                    <th className="p-4 font-medium">Title</th>
+                                    <th className="p-4 font-medium">Date</th>
+                                    <th className="p-4 font-medium">Type</th>
+                                    <th className="p-4 font-medium">Hype Score</th>
+                                    <th className="p-4 font-medium">Status</th>
+                                    <th className="p-4 font-medium">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {events.map((event) => (
+                                    <tr key={event.id} className="border-t">
+                                        <td className="p-4 font-medium">{event.title}</td>
+                                        <td className="p-4">{event.target_date}</td>
+                                        <td className="p-4">{event.event_type}</td>
+                                        <td className="p-4">{event.hype_score}</td>
+                                        <td className="p-4">
+                                            <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${event.status === 'ACTIVE'
+                                                    ? 'bg-green-100 text-green-800'
+                                                    : 'bg-gray-100 text-gray-800'
+                                                }`}>
+                                                {event.status}
+                                            </span>
+                                        </td>
+                                        <td className="p-4">
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() => toggleStatus(event.id, event.status)}
+                                            >
+                                                {event.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
+                                            </Button>
+                                        </td>
+                                    </tr>
+                                ))}
+                                {events.length === 0 && (
+                                    <tr>
+                                        <td colSpan={6} className="p-4 text-center text-muted-foreground">
+                                            No events found.
+                                        </td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </CardContent>
+            </Card>
         </div>
     );
 }

@@ -25,6 +25,38 @@ class SchedulerService:
     async def daily_update_job(self):
         print(f"[{datetime.now()}] Starting daily update job...")
         
+        # 0. Discovery Phase: Find new events for target tickers
+        from app.core.constants import TARGET_TICKERS
+        from app.services.crawler.discovery import EventDiscoveryCrawler
+        
+        print(f"Starting Discovery Phase for {len(TARGET_TICKERS)} tickers...")
+        for ticker in TARGET_TICKERS:
+            # Simple rate limiting or batching could be added here
+            print(f"Discovering events for {ticker}...")
+            discovery_crawler = EventDiscoveryCrawler(ticker=ticker)
+            try:
+                discovered = await discovery_crawler.run()
+                for event_data in discovered:
+                    # Check if event already exists (simple check by title)
+                    existing = self.supabase.table("events").select("id").eq("title", event_data['title']).execute()
+                    if not existing.data:
+                        print(f"  -> New event found: {event_data['title']}")
+                        # Insert new event as INACTIVE by default
+                        self.supabase.table("events").insert({
+                            "title": event_data['title'],
+                            "description": event_data['description'],
+                            "event_type": "TYPE_A", # Default to Type A for now
+                            "status": "INACTIVE",
+                            "target_date": (date.today() + timedelta(days=30)).isoformat(), # Placeholder date
+                            "related_tickers": [ticker],
+                            "source_url": event_data['source_url'],
+                            "hype_score": 0
+                        }).execute()
+                    else:
+                        print(f"  -> Event already exists: {event_data['title']}")
+            except Exception as e:
+                print(f"Error discovering for {ticker}: {e}")
+
         # 1. Fetch all ACTIVE events
         try:
             response = self.supabase.table("events").select("*").eq("status", "ACTIVE").execute()
