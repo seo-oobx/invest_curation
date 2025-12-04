@@ -17,8 +17,14 @@ class EventDiscoveryCrawler(BaseCrawler):
     def __init__(self, ticker: str, headless: bool = True):
         super().__init__(headless)
         self.ticker = ticker
+        
+        from app.core.constants import TICKER_NAME_MAP
+        search_name = TICKER_NAME_MAP.get(ticker, ticker)
+        
         # 검색 쿼리 조합: "{종목명} 일정 OR 출시 OR 발표 OR 공개"
-        self.search_query = f"{ticker} 일정 OR 출시 OR 발표 OR 공개"
+        # If ticker is different from name (e.g. MSFT vs 마이크로소프트), search both?
+        # Or just the name. Korean news usually uses the name.
+        self.search_query = f"{search_name} 일정 OR 출시 OR 발표 OR 공개"
         encoded_query = quote(self.search_query)
         # Google News RSS URL (Korean, Korea region)
         self.rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"

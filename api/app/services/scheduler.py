@@ -50,7 +50,7 @@ class SchedulerService:
                             "title": event_data['title'],
                             "description": event_data['description'],
                             "event_type": "TYPE_A", # Default to Type A for now
-                            "status": "INACTIVE",
+                            "status": "ACTIVE", # Auto-activate to show on main page immediately
                             "target_date": target_date,
                             "related_tickers": [ticker],
                             "source_url": event_data['source_url'],
